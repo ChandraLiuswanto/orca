@@ -22,6 +22,8 @@ export type RuntimeClientEvent =
   | { type: 'nativeChatQueueFollowUpsChanged'; queueFollowUps: boolean }
   /** The Workspace options UI state changed; a mirroring phone re-reads it. */
   | { type: 'workspaceViewChanged' }
+  /** Top-level settings whose values changed; a phone re-reads only the settings it shows. */
+  | { type: 'settingsChanged'; keys: string[] }
   | {
       type: 'worktreesChanged'
       repoId: string

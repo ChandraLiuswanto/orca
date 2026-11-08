@@ -33,7 +33,7 @@ export type HostQuery<TInput extends HostQueryParams, TData> = {
   ) => Promise<TData>
   staleTime?: StaleTimeFunction<TData, Error, TData, HostQueryKey>
   gcTime?: number
-  // Only for families the desktop sends no change signal for.
+  // Reads a stale answer on foreground: one with no change signal, or one an event marked while hidden.
   refetchOnWindowFocus?: boolean
   // Kept fresh by a subscription, so the connected edge leaves it alone.
   streamBacked?: boolean
@@ -44,6 +44,8 @@ export type HostQuery<TInput extends HostQueryParams, TData> = {
 export type HostQuerySignal = {
   events: readonly Exclude<RuntimeClientEventStreamMessage['type'], 'ready' | 'end'>[]
   floorMs?: number
+  // The top-level settings this family reads; a settingsChanged naming none of them leaves it alone. Absent: any.
+  settingsKeys?: readonly string[]
 }
 
 export function defineHostQuery<TInput extends HostQueryParams, TData>(
@@ -127,7 +129,13 @@ export function useHostQuery<TInput extends HostQueryParams, TData>(
   host: { hostId: string; client: RpcClient | null },
   target: HostQueryTarget,
   input: TInput,
-  options?: { enabled?: boolean; subscribed?: boolean; refetchInterval?: number | false }
+  options?: {
+    enabled?: boolean
+    subscribed?: boolean
+    refetchInterval?: number | false
+    // Replaces the family's own, e.g. once the host is known to signal every change.
+    staleTime?: number
+  }
 ): UseQueryResult<TData> {
   const { hostId, client } = host
   const enabled = client !== null && options?.enabled !== false
@@ -140,6 +148,7 @@ export function useHostQuery<TInput extends HostQueryParams, TData>(
   }, [query, client, hostId, keyHash, enabled])
   return useQuery({
     ...queryOptions,
+    ...(options?.staleTime === undefined ? {} : { staleTime: options.staleTime }),
     subscribed: options?.subscribed,
     refetchInterval: options?.refetchInterval
   })

@@ -5,6 +5,7 @@ import { useWorkspaceExecutionHost } from '../navigation/workspace-execution-hos
 import { defineHostQuery, useHostQuery } from '../query/host-query'
 import { hostQueryKey, type HostQueryParams, type HostQueryTarget } from '../query/host-query-key'
 import { hostReadClient } from '../query/host-read-client'
+import { useHostSettingsChangeSignal } from '../query/settings-change-signal'
 import type { RpcClient } from '../transport/rpc-client'
 import { newTabSettingsRead } from '../transport/settings-read-operations'
 import {
@@ -69,16 +70,18 @@ export async function refreshDetectedAgents(
 
 const NO_INPUT = {}
 
+// The launch reads the whole settings object, so any settingsChanged makes it stale.
 const newTabSettingsQuery = defineHostQuery({
   family: 'settings.newTab',
   staleTime: 60_000,
   gcTime: 30 * 60_000,
+  signal: { events: ['settingsChanged'] },
   fetch: async (client, _target, _input: typeof NO_INPUT) => ({
     settings: newTabSettingsRead.interpret(await newTabSettingsRead.request(client))()
   })
 })
 
-// Settings are read again on every sheet open; the cached ones paint meanwhile.
+// A host without settingsChanged gets a reread on every sheet open; the cached ones paint meanwhile.
 export function reloadNewTabSettings(
   queryClient: QueryClient,
   hostId: string,
@@ -95,6 +98,8 @@ type MobileAgentLaunchQueries = {
   settings: UseQueryResult<{ settings: unknown }>
   target: HostQueryTarget
   input: DetectionInput
+  // The host tells this page when settings change, so a sheet open need not read them again.
+  settingsSignalled: boolean
 }
 
 // One agent list per workspace and document, shared by the "+" sheet and the "Fix with" labels.
@@ -124,11 +129,13 @@ export function useMobileAgentLaunchQueries(args: {
     enabled,
     subscribed: observed(detectedAgentsQuery.family, target, input)
   })
+  const settingsSignalled = useHostSettingsChangeSignal(hostId, client)
   const settings = useHostQuery(newTabSettingsQuery, { hostId, client }, settingsTarget, NO_INPUT, {
     enabled,
-    subscribed: observed(newTabSettingsQuery.family, settingsTarget, NO_INPUT)
+    subscribed: observed(newTabSettingsQuery.family, settingsTarget, NO_INPUT),
+    staleTime: settingsSignalled ? Infinity : undefined
   })
-  return { detection, settings, target, input }
+  return { detection, settings, target, input, settingsSignalled }
 }
 
 export function agentLaunchContextOf({

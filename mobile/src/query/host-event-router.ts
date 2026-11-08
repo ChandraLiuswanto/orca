@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { focusManager, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
 import type { RpcClient } from '../transport/rpc-client'
 import {
@@ -13,23 +13,60 @@ function signalOf(query: Query): HostQuerySignal | undefined {
   return query.meta?.signal as HostQuerySignal | undefined
 }
 
-const trailingReads = new WeakMap<QueryClient, Set<string>>()
+type ChangeEvent = Exclude<SharedClientEvent, { type: 'ready' | 'end' | 'error' }>
 
-function trailingReadsOf(queryClient: QueryClient): Set<string> {
-  const existing = trailingReads.get(queryClient)
+function signalMatches(signal: HostQuerySignal, event: ChangeEvent): boolean {
+  if (!signal.events.includes(event.type)) {
+    return false
+  }
+  if (event.type !== 'settingsChanged' || !signal.settingsKeys || !Array.isArray(event.keys)) {
+    return true
+  }
+  return event.keys.some((key) => signal.settingsKeys?.includes(key))
+}
+
+// What to do once a read already out settles: read again, or only mark the answer stale.
+type AfterRead = 'refetch' | 'stale'
+
+const afterReads = new WeakMap<QueryClient, Map<string, AfterRead>>()
+
+function afterReadsOf(queryClient: QueryClient): Map<string, AfterRead> {
+  const existing = afterReads.get(queryClient)
   if (existing) {
     return existing
   }
-  const hashes = new Set<string>()
-  trailingReads.set(queryClient, hashes)
+  const pending = new Map<string, AfterRead>()
+  afterReads.set(queryClient, pending)
   // One cache listener per world, for as long as the world's client lives.
   queryClient.getQueryCache().subscribe(({ type, query }) => {
-    if (type === 'updated' && hashes.has(query.queryHash) && query.state.fetchStatus === 'idle') {
-      hashes.delete(query.queryHash)
-      refetchHostQueryAfterInFlight(queryClient, query)
+    const after = pending.get(query.queryHash)
+    if (type === 'updated' && after && query.state.fetchStatus === 'idle') {
+      pending.delete(query.queryHash)
+      if (after === 'refetch') {
+        refetchHostQueryAfterInFlight(queryClient, query)
+      } else {
+        void markStale(queryClient, query)
+      }
     }
   })
-  return hashes
+  return pending
+}
+
+function markStale(queryClient: QueryClient, query: Query): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: query.queryKey,
+    exact: true,
+    refetchType: 'none'
+  })
+}
+
+// A read already out may predate the change, and its answer would clear the mark; mark again once it lands.
+function markStaleAfterInFlight(queryClient: QueryClient, query: Query): void {
+  void markStale(queryClient, query)
+  const pending = afterReadsOf(queryClient)
+  if (query.state.fetchStatus === 'fetching' && !pending.has(query.queryHash)) {
+    pending.set(query.queryHash, 'stale')
+  }
 }
 
 /**
@@ -38,7 +75,7 @@ function trailingReadsOf(queryClient: QueryClient): Set<string> {
  */
 export function refetchHostQueryAfterInFlight(queryClient: QueryClient, query: Query): void {
   if (query.state.fetchStatus === 'fetching') {
-    trailingReadsOf(queryClient).add(query.queryHash)
+    afterReadsOf(queryClient).set(query.queryHash, 'refetch')
     return
   }
   void queryClient.refetchQueries(
@@ -47,12 +84,28 @@ export function refetchHostQueryAfterInFlight(queryClient: QueryClient, query: Q
   )
 }
 
+type RouterHandle = {
+  stop: () => void
+  isReady: () => boolean
+  onReadyChange: (listener: () => void) => () => void
+}
+
 function startHostEventRouter(
   queryClient: QueryClient,
   hostId: string,
   client: RpcClient
-): () => void {
+): RouterHandle {
   let ready = false
+  const readyListeners = new Set<() => void>()
+  const setReady = (next: boolean): void => {
+    if (next !== ready) {
+      ready = next
+      readyListeners.forEach((listener) => listener())
+    }
+  }
+  const startedAt = Date.now()
+  // When the last stream ended; the next one's ready follows changes nobody heard.
+  let endedAt: number | null = null
   let stopStream: (() => void) | null = null
   // Bumped when the stream ends, so an opener whose wire ended synchronously keeps no stale stop.
   let streamEpoch = 0
@@ -67,13 +120,11 @@ function startHostEventRouter(
         return signal !== undefined && matches(signal)
       }
     })
-  const markStale = (query: Query): Promise<void> =>
-    queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true, refetchType: 'none' })
   // Unobserved or hidden: stale only, so the next mount or foreground reads it.
   const readsNow = (query: Query): boolean => query.isActive() && focusManager.isFocused()
 
   const onChange = (query: Query): void => {
-    void markStale(query)
+    markStaleAfterInFlight(queryClient, query)
     if (!readsNow(query) || floorTimers.has(query.queryHash)) {
       return
     }
@@ -94,10 +145,8 @@ function startHostEventRouter(
     )
   }
 
-  const onReplayedReady = (missedSince: number): void => {
-    // After a reconnect, the connected edge already re-read every observed query; a replay with no reconnect (a path switch) did not.
-    const connectedAt = client.getLastConnectedAt() ?? 0
-    const readSince = connectedAt > missedSince ? connectedAt : Infinity
+  // Reads again (or marks stale, when no one watches) every answer older than `readSince`.
+  const catchUp = (readSince: number): void => {
     for (const query of signalledQueries(() => true)) {
       if (query.state.fetchStatus === 'fetching' || query.state.dataUpdatedAt >= readSince) {
         continue
@@ -105,31 +154,44 @@ function startHostEventRouter(
       if (readsNow(query)) {
         void queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true })
       } else {
-        void markStale(query)
+        void markStale(queryClient, query)
       }
     }
+  }
+
+  const onReplayedReady = (missedSince: number): void => {
+    // After a reconnect, the connected edge already re-read every observed query; a replay with no reconnect (a path switch) did not.
+    const connectedAt = client.getLastConnectedAt() ?? 0
+    catchUp(connectedAt > missedSince ? connectedAt : Infinity)
   }
 
   const onEvent = (event: SharedClientEvent): void => {
     if (event.type === 'ready') {
       // Events are not queued while disconnected, so a replayed ready may follow missed changes.
-      if (ready && !('joined' in event)) {
+      if (!ready) {
+        // Before this router started, or since its last stream ended, nothing heard this host.
+        if (endedAt === null) {
+          catchUp(startedAt)
+        } else {
+          onReplayedReady(endedAt)
+        }
+      } else if (!('joined' in event)) {
         onReplayedReady(readyAt)
       }
-      ready = true
       readyAt = Date.now()
+      setReady(true)
       return
     }
     if (event.type === 'end' || event.type === 'error') {
       // The shared stream is gone; the next connected edge opens a fresh one (the edge itself re-reads what was missed).
-      ready = false
+      endedAt = Date.now()
+      setReady(false)
       streamEpoch += 1
       stopStream?.()
       stopStream = null
       return
     }
-    const eventType = event.type
-    for (const query of signalledQueries((signal) => signal.events.includes(eventType))) {
+    for (const query of signalledQueries((signal) => signalMatches(signal, event))) {
       onChange(query)
     }
   }
@@ -154,18 +216,26 @@ function startHostEventRouter(
       openStream()
     }
   })
-  return () => {
-    stopWatchingConnection()
-    stopStream?.()
-    stopStream = null
-    for (const timer of floorTimers.values()) {
-      clearTimeout(timer)
+  return {
+    stop: () => {
+      stopWatchingConnection()
+      stopStream?.()
+      stopStream = null
+      for (const timer of floorTimers.values()) {
+        clearTimeout(timer)
+      }
+      floorTimers.clear()
+      readyListeners.clear()
+    },
+    isReady: () => ready,
+    onReadyChange: (listener) => {
+      readyListeners.add(listener)
+      return () => readyListeners.delete(listener)
     }
-    floorTimers.clear()
   }
 }
 
-type Router = { holders: number; stop: () => void }
+type Router = { holders: number; handle: RouterHandle }
 
 const routers = new WeakMap<QueryClient, Map<RpcClient, Router>>()
 
@@ -174,7 +244,7 @@ function retainHostEventRouter(
   queryClient: QueryClient,
   hostId: string,
   client: RpcClient
-): () => void {
+): { handle: RouterHandle; release: () => void } {
   let byClient = routers.get(queryClient)
   if (!byClient) {
     byClient = new Map()
@@ -183,25 +253,55 @@ function retainHostEventRouter(
   const clients = byClient
   let router = clients.get(client)
   if (!router) {
-    router = { holders: 0, stop: startHostEventRouter(queryClient, hostId, client) }
+    router = { holders: 0, handle: startHostEventRouter(queryClient, hostId, client) }
     clients.set(client, router)
   }
   const held = router
   held.holders += 1
-  return () => {
+  const release = (): void => {
     held.holders -= 1
     if (held.holders === 0) {
-      held.stop()
+      held.handle.stop()
       clients.delete(client)
     }
   }
+  return { handle: held.handle, release }
 }
 
 /** Keeps the host's event-signalled families (see HostQuery `signal`) fresh while a screen reads them. */
 export function useHostEventRouter(hostId: string | undefined, client: RpcClient | null): void {
   const queryClient = useQueryClient()
   useEffect(
-    () => (client && hostId ? retainHostEventRouter(queryClient, hostId, client) : undefined),
+    () =>
+      client && hostId ? retainHostEventRouter(queryClient, hostId, client).release : undefined,
     [queryClient, hostId, client]
+  )
+}
+
+/**
+ * Keeps the host's event router running, like useHostEventRouter, and says whether its event stream
+ * is live. Only while it is can a family hold its answer until an event marks it stale.
+ */
+export function useHostEventStreamReady(
+  hostId: string | undefined,
+  client: RpcClient | null
+): boolean {
+  const queryClient = useQueryClient()
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (!client || !hostId) {
+        return () => {}
+      }
+      const { handle, release } = retainHostEventRouter(queryClient, hostId, client)
+      const stopListening = handle.onReadyChange(onChange)
+      return () => {
+        stopListening()
+        release()
+      }
+    },
+    [queryClient, hostId, client]
+  )
+  return useSyncExternalStore(subscribe, () =>
+    client && hostId ? (routers.get(queryClient)?.get(client)?.handle.isReady() ?? false) : false
   )
 }

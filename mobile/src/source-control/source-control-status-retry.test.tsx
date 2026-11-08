@@ -222,9 +222,10 @@ vi.mock('../session/use-mobile-pr-ai-triage', () => ({
     launch: () => {}
   })
 }))
-vi.mock('../components/host-protocol-gates-context', () => ({
-  useHostProtocolGates: () => ({ hostCapabilities: [], statusPending: false, statusReadable: true })
-}))
+vi.mock('../components/host-protocol-gates-context', () => {
+  const gates = { hostCapabilities: [], statusPending: false, statusReadable: true }
+  return { useHostProtocolGates: () => gates, useOptionalHostProtocolGates: () => gates }
+})
 vi.mock('../session/use-pr-bot-author-overrides', () => ({
   usePRBotAuthorOverrides: () => new Set()
 }))

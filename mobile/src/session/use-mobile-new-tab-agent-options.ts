@@ -45,7 +45,7 @@ export function useMobileNewTabAgentOptions(args: {
   const { client, connState, hostId, open, setLoadState, setOptions } = args
   const queryClient = useQueryClient()
   const connected = client !== null && connState === 'connected'
-  const { detection, settings, target, input } = useMobileAgentLaunchQueries({
+  const { detection, settings, target, input, settingsSignalled } = useMobileAgentLaunchQueries({
     hostId,
     client,
     worktreeId: args.worktreeId,
@@ -60,7 +60,9 @@ export function useMobileNewTabAgentOptions(args: {
     if (!open || !client || connState !== 'connected') {
       return
     }
-    reloadNewTabSettings(queryClient, hostId, target.exec)
+    if (!settingsSignalled) {
+      reloadNewTabSettings(queryClient, hostId, target.exec)
+    }
     const queryKey = hostQueryKey(hostId, detectedAgentsQuery.family, target, input)
     const cached = queryClient.getQueryState<MobileDetectedAgents>(queryKey)
     const refreshed = refreshedThisConnection(client)
@@ -81,7 +83,7 @@ export function useMobileNewTabAgentOptions(args: {
     refreshed.add(targetKey)
     // A failed refresh keeps the agents already listed.
     void refreshDetectedAgents(queryClient, { hostId, client }, target, input).catch(() => {})
-  }, [client, connState, hostId, input, mountedAt, open, queryClient, target])
+  }, [client, connState, hostId, input, mountedAt, open, queryClient, settingsSignalled, target])
 
   const detected = detection.data
   const loadState: MobileNewTabAgentLoadState = !connected
