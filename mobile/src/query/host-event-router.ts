@@ -5,12 +5,17 @@ import {
   subscribeSharedClientEvents,
   type SharedClientEvent
 } from '../transport/shared-client-events'
-import type { HostQuerySignal } from './host-query'
-import { hostScopeKey } from './host-query-key'
+import type { HostQuerySignal, HostSignalEvent } from './host-query'
+import { hostScopeKey, type HostQueryKey } from './host-query-key'
 
 function signalOf(query: Query): HostQuerySignal | undefined {
   // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: hostQueryOptions writes `signal` from the family's HostQuerySignal.
   return query.meta?.signal as HostQuerySignal | undefined
+}
+
+function targetOf(query: Query): HostQueryKey[3] {
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: signalledQueries scans only host-scoped keys, which hostQueryKey builds.
+  return (query.queryKey as HostQueryKey)[3]
 }
 
 const trailingReads = new WeakMap<QueryClient, Set<string>>()
@@ -59,12 +64,12 @@ function startHostEventRouter(
   // When the stream last said it was live; a replayed ready may have missed events since.
   let readyAt = 0
   const floorTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  const signalledQueries = (matches: (signal: HostQuerySignal) => boolean): Query[] =>
+  const signalledQueries = (matches: (signal: HostQuerySignal, query: Query) => boolean): Query[] =>
     queryClient.getQueryCache().findAll({
       queryKey: hostScopeKey(hostId),
       predicate: (query) => {
         const signal = signalOf(query)
-        return signal !== undefined && matches(signal)
+        return signal !== undefined && matches(signal, query)
       }
     })
   const markStale = (query: Query): Promise<void> =>
@@ -128,8 +133,11 @@ function startHostEventRouter(
       stopStream = null
       return
     }
-    const eventType = event.type
-    for (const query of signalledQueries((signal) => signal.events.includes(eventType))) {
+    const signalled: HostSignalEvent = event
+    const named = (signal: HostQuerySignal, query: Query): boolean =>
+      signal.events.includes(signalled.type) &&
+      (signal.matches?.(signalled, targetOf(query)) ?? true)
+    for (const query of signalledQueries(named)) {
       onChange(query)
     }
   }

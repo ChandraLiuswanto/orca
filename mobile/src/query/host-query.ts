@@ -14,6 +14,7 @@ import {
 import type { RuntimeClientEventStreamMessage } from '../../../src/shared/runtime-client-events'
 import type { RpcClient } from '../transport/rpc-client'
 import { useHostConnectionInvalidation } from './host-connection-invalidation'
+import { useHostEventRouter } from './host-event-router'
 import {
   hostQueryKey,
   type HostQueryKey,
@@ -41,9 +42,13 @@ export type HostQuery<TInput extends HostQueryParams, TData> = {
   signal?: HostQuerySignal
 }
 
+export type HostSignalEvent = Exclude<RuntimeClientEventStreamMessage, { type: 'ready' | 'end' }>
+
 export type HostQuerySignal = {
-  events: readonly Exclude<RuntimeClientEventStreamMessage['type'], 'ready' | 'end'>[]
+  events: readonly HostSignalEvent['type'][]
   floorMs?: number
+  // Narrows a listed event to the queries it names; without it every query in the family is stale.
+  matches?: (event: HostSignalEvent, target: HostQueryTarget) => boolean
 }
 
 export function defineHostQuery<TInput extends HostQueryParams, TData>(
@@ -132,6 +137,8 @@ export function useHostQuery<TInput extends HostQueryParams, TData>(
   const { hostId, client } = host
   const enabled = client !== null && options?.enabled !== false
   useHostConnectionInvalidation(hostId, enabled ? client : null)
+  // A screen alone on its page has no host list to keep the router; its signalled reads hold one.
+  useHostEventRouter(hostId, enabled && query.signal ? client : null)
   // Same options object while nothing changed (target and input count by value), so TanStack's per-render setOptions is a no-op.
   const keyHash = hashKey([target, input])
   const queryOptions = useMemo((): UseQueryOptions<TData, Error, TData, HostQueryKey> => {
@@ -155,6 +162,7 @@ export function useHostQueries<TInput extends HostQueryParams, TData, TCombined>
 ): TCombined {
   const { hostId, client } = host
   useHostConnectionInvalidation(hostId, client)
+  useHostEventRouter(hostId, query.signal ? client : null)
   const keyHash = hashKey([target, inputs])
   const queries = useMemo(
     () => inputs.map((input) => observerOptions(query, client, hostId, target, input)),
