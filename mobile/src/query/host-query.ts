@@ -20,12 +20,13 @@ import {
   type HostQueryParams,
   type HostQueryTarget
 } from './host-query-key'
-import type { HostQueryPersist } from './host-query-persistence'
+import { holdsRestoredHostQueryData, type HostQueryPersist } from './host-query-persistence'
 import { hostReadClient } from './host-read-client'
 
 export type HostQuery<TInput extends HostQueryParams, TData> = {
   family: string
-  // Calls the domain's loader. `previous` is the cached data a revalidation may build on; live reads pass none.
+  // Calls the domain's loader. `previous` is the cached data a revalidation may build on; live reads and
+  // data restored from the phone's store pass none.
   fetch: (
     client: RpcClient,
     target: HostQueryTarget,
@@ -55,6 +56,16 @@ export function defineHostQuery<TInput extends HostQueryParams, TData>(
   return query
 }
 
+// What a revalidation may build on: data this document read, never a record restored from the store.
+function liveCachedData<TData>(
+  queryClient: QueryClient,
+  queryKey: HostQueryKey
+): TData | undefined {
+  return holdsRestoredHostQueryData(queryClient, hashKey(queryKey))
+    ? undefined
+    : queryClient.getQueryData<TData>(queryKey)
+}
+
 function hostQueryOptions<TInput extends HostQueryParams, TData>(
   query: HostQuery<TInput, TData>,
   client: RpcClient,
@@ -69,7 +80,7 @@ function hostQueryOptions<TInput extends HostQueryParams, TData>(
     queryKey,
     // No abort signal: the host has no cancel, and a screen that unmounts still wants the answer cached.
     queryFn: ({ client: queryClient }) =>
-      fetch(hostReadClient(client), target, input, queryClient.getQueryData<TData>(queryKey)),
+      fetch(hostReadClient(client), target, input, liveCachedData<TData>(queryClient, queryKey)),
     meta: { streamBacked, signal, persist }
   })
 }
