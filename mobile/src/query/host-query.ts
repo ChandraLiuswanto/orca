@@ -25,11 +25,13 @@ import { hostReadClient } from './host-read-client'
 export type HostQuery<TInput extends HostQueryParams, TData> = {
   family: string
   // Calls the domain's loader. `previous` is the cached data a revalidation may build on; live reads pass none.
+  // `read.live` marks an action's read (readHostQueryLive), which must not be served from a host-side cache.
   fetch: (
     client: RpcClient,
     target: HostQueryTarget,
     input: TInput,
-    previous: TData | undefined
+    previous: TData | undefined,
+    read: { live: boolean }
   ) => Promise<TData>
   staleTime?: StaleTimeFunction<TData, Error, TData, HostQueryKey>
   gcTime?: number
@@ -66,7 +68,9 @@ function hostQueryOptions<TInput extends HostQueryParams, TData>(
     queryKey,
     // No abort signal: the host has no cancel, and a screen that unmounts still wants the answer cached.
     queryFn: ({ client: queryClient }) =>
-      fetch(hostReadClient(client), target, input, queryClient.getQueryData<TData>(queryKey)),
+      fetch(hostReadClient(client), target, input, queryClient.getQueryData<TData>(queryKey), {
+        live: false
+      }),
     meta: { streamBacked, signal }
   })
 }
@@ -88,7 +92,7 @@ export async function readHostQueryLive<TInput extends HostQueryParams, TData>(
   }
   const data = await queryClient.query({
     ...hostQueryOptions(query, client, hostId, target, input),
-    queryFn: () => query.fetch(hostReadClient(client), target, input, undefined),
+    queryFn: () => query.fetch(hostReadClient(client), target, input, undefined, { live: true }),
     staleTime: 0
   })
   await new Promise<void>((resolve) => notifyManager.schedule(resolve))
