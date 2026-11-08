@@ -82,7 +82,11 @@ export function writeWorktreeSortOrder(
   })
   const metaFor = (worktreeId: string): WorktreeMeta | undefined => {
     const target = targets.get(worktreeId)
-    return target && store.getWorktreeMetaForHost
+    // Why: an unwritable row's unqualified meta can be a twin's rank; the planner must not keep it as an anchor.
+    if (!target) {
+      return undefined
+    }
+    return store.getWorktreeMetaForHost
       ? store.getWorktreeMetaForHost(worktreeId, target.hostId)
       : store.getWorktreeMeta(worktreeId)
   }
