@@ -34,48 +34,61 @@ export function installPtyInspectIpcHandlers(deps: {
 
   installPtySessionListingIpcHandler(deps)
 
+  // Await the local provider only when a local id is present; validation drops empty, oversized and repeated ids.
+  const readInspectablePtyIds = async (args: { ids?: unknown }): Promise<string[]> => {
+    const ids = new Set<string>()
+    for (const value of Array.isArray(args?.ids) ? args.ids.slice(0, 512) : []) {
+      if (typeof value === 'string' && value.length > 0 && value.length <= 512) {
+        ids.add(value)
+      }
+    }
+    if ([...ids].some((id) => resolvePtyExecutionHost(id) === LOCAL_EXECUTION_HOST_ID)) {
+      await getLocalPtyProviderStartupPromise()
+    }
+    return [...ids]
+  }
+
   ipcMain.handle(
     'pty:getAuthoritativeBufferSnapshotCapabilities',
-    async (_event, args: { ids?: unknown }) => {
-      const ids = Array.isArray(args?.ids) ? args.ids.slice(0, 512) : []
-      const hasLocalPtyId = ids.some(
-        (value) =>
-          typeof value === 'string' &&
-          value.length > 0 &&
-          value.length <= 512 &&
-          resolvePtyExecutionHost(value) === LOCAL_EXECUTION_HOST_ID
-      )
-      if (hasLocalPtyId) {
-        await getLocalPtyProviderStartupPromise()
-      }
-      const capabilities: { id: string; authoritative: boolean | null }[] = []
-      const seen = new Set<string>()
-      for (const value of ids) {
-        if (
-          typeof value !== 'string' ||
-          value.length === 0 ||
-          value.length > 512 ||
-          seen.has(value)
-        ) {
-          continue
-        }
-        seen.add(value)
-        const provider = tryGetProviderForPty(value)
+    async (_event, args: { ids?: unknown }) =>
+      (await readInspectablePtyIds(args)).map((id) => {
+        const provider = tryGetProviderForPty(id)
         // Missing inspection support is non-authoritative; unattached SSH relays remain retryable.
-        capabilities.push({
-          id: value,
+        return {
+          id,
           authoritative: !provider
-            ? isDispatchablePtyHost(resolvePtyExecutionHost(value))
+            ? isDispatchablePtyHost(resolvePtyExecutionHost(id))
               ? null
               : false
             : provider.canProvideAuthoritativeBufferSnapshot
-              ? provider.canProvideAuthoritativeBufferSnapshot(value)
+              ? provider.canProvideAuthoritativeBufferSnapshot(id)
               : false
-        })
-      }
-      return capabilities
-    }
+        }
+      })
   )
+
+  ipcMain.removeHandler('pty:getGoneSessionIds')
+  // Only a local provider's explicit absent answer marks a session gone; SSH and remote hosts keep their own parking rules.
+  ipcMain.handle('pty:getGoneSessionIds', async (_event, args: { ids?: unknown }) => {
+    const ids = (await readInspectablePtyIds(args)).filter(
+      (id) => resolvePtyExecutionHost(id) === LOCAL_EXECUTION_HOST_ID
+    )
+    // Probes run together so one slow daemon answer does not serialize the batch.
+    const gone = await Promise.all(
+      ids.map(async (id) => {
+        const provider = tryGetProviderForPty(id)
+        if (!provider?.probePtyLiveness || provider.canProvideAuthoritativeBufferSnapshot?.(id)) {
+          return false
+        }
+        try {
+          return (await provider.probePtyLiveness(id)) === false
+        } catch {
+          return false
+        }
+      })
+    )
+    return ids.filter((_id, index) => gone[index])
+  })
 
   ipcMain.handle('pty:hasPty', async (_event, args: { id: string }): Promise<boolean | null> => {
     if (typeof args?.id !== 'string' || isRemoteRuntimePtyId(args.id)) {

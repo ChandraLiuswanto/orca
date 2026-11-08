@@ -82,6 +82,7 @@ type MockStoreState = {
     }
   >
   runtimePaneTitlesByTabId: Record<string, Record<number, string>>
+  sleepingAgentSessionsByPaneKey: Record<string, { tabId?: string }>
   settings: { terminalSshViewParking?: boolean } | null
   runtimeStatusByEnvironmentId: Map<
     string,
@@ -108,6 +109,11 @@ import {
   synchronizeTerminalProviderSnapshotCapabilities
 } from '../../../terminal/terminal-provider-snapshot-capability'
 import {
+  markTerminalProviderSessionBound,
+  probeTerminalProviderGoneSessions
+} from '../../../terminal/terminal-provider-gone-sessions'
+import {
+  canWatcherCoverParkedTerminalTab,
   shouldDeferParkedPtyExitTabClose,
   syncParkedTerminalTabWatchers
 } from './terminal-parked-tab-watchers'
@@ -150,6 +156,7 @@ describe('terminal-parked-tab-watchers', () => {
       tabsByWorktree: {},
       terminalLayoutsByTabId: {},
       runtimePaneTitlesByTabId: {},
+      sleepingAgentSessionsByPaneKey: {},
       settings: null,
       runtimeStatusByEnvironmentId: new Map(),
       clearTabLaunchAgent: vi.fn(),
@@ -210,6 +217,38 @@ describe('terminal-parked-tab-watchers', () => {
     expect(startedWatchers[1].dispose).toHaveBeenCalledTimes(1)
     expect(startedWatchers[0].dispose).not.toHaveBeenCalled()
     expect(getParkedTerminalWatcherTabIds()).toEqual([TAB_ID])
+  })
+
+  it('starts the parked watcher once a gone session is bound again under its id', async () => {
+    await probeTerminalProviderGoneSessions([PTY_ID], async () => [PTY_ID])
+    capturePanes([{ ptyId: PTY_ID, paneId: 1, leafId: LEAF_ID, drivesTabTitle: true }])
+    syncParked()
+    expect(exitSubscriptions.some((entry) => entry.ptyId === PTY_ID)).toBe(false)
+
+    markTerminalProviderSessionBound(PTY_ID)
+    syncParked()
+
+    expect(exitSubscriptions.some((entry) => entry.ptyId === PTY_ID)).toBe(true)
+  })
+
+  it('keeps a split tab mounted when only some pane sessions are gone', async () => {
+    await probeTerminalProviderGoneSessions([PTY_ID], async () => [PTY_ID])
+    capturePanes([
+      { ptyId: PTY_ID, paneId: 1, leafId: LEAF_ID, drivesTabTitle: true },
+      { ptyId: SECOND_PTY_ID, paneId: 2, leafId: SECOND_LEAF_ID, drivesTabTitle: false }
+    ])
+
+    expect(canWatcherCoverParkedTerminalTab(WORKTREE_ID, { id: TAB_ID, ptyId: PTY_ID })).toBe(false)
+  })
+
+  it('keeps a gone agent tab mounted so its resume path is unchanged', async () => {
+    await probeTerminalProviderGoneSessions([PTY_ID], async () => [PTY_ID])
+    mockStoreState.tabsByWorktree[WORKTREE_ID] = [
+      { id: TAB_ID, ptyId: PTY_ID, launchAgent: 'claude' }
+    ]
+    capturePanes([{ ptyId: PTY_ID, paneId: 1, leafId: LEAF_ID, drivesTabTitle: true }])
+
+    expect(canWatcherCoverParkedTerminalTab(WORKTREE_ID, { id: TAB_ID, ptyId: PTY_ID })).toBe(false)
   })
 
   it('consumes the exit and drops the parked entry after the last-watcher close resolves', () => {

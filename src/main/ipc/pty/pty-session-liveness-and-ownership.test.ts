@@ -50,7 +50,22 @@ vi.mock('../../codex/history/index/codex-state-db-backfill-recovery', () =>
 )
 
 describe('registerPtyHandlers', () => {
-  const { handlers, mainWindow } = setupPtyIpcSuite()
+  const { handlers, mainWindow, installDaemonTestProvider } = setupPtyIpcSuite()
+
+  it('reports a session gone only when the local provider answers that it is absent', async () => {
+    registerPtyHandlers(mainWindow as never)
+    installDaemonTestProvider({
+      canProvideAuthoritativeBufferSnapshot: (id: string) => id === 'snapshot-pty',
+      probePtyLiveness: async (id: string) =>
+        id === 'dead-pty' || id === 'snapshot-pty' ? false : id === 'unobserved-pty' ? null : true
+    })
+
+    await expect(
+      handlers.get('pty:getGoneSessionIds')!(null, {
+        ids: ['dead-pty', 'live-pty', 'unobserved-pty', 'snapshot-pty', 'remote:env-1@@terminal-1']
+      })
+    ).resolves.toEqual(['dead-pty'])
+  })
 
   it('never answers liveness for a paired-runtime handle from the local registry', async () => {
     const hasPty = vi.fn(() => false)
