@@ -20,6 +20,7 @@ import {
   type HostQueryParams,
   type HostQueryTarget
 } from './host-query-key'
+import type { HostQueryPersist } from './host-query-persistence'
 import { hostReadClient } from './host-read-client'
 
 export type HostQuery<TInput extends HostQueryParams, TData> = {
@@ -39,6 +40,8 @@ export type HostQuery<TInput extends HostQueryParams, TData> = {
   streamBacked?: boolean
   // Desktop change events that make this family stale (host-event-router), and the least time between reads they cause.
   signal?: HostQuerySignal
+  // Kept on the phone between launches (host-query-persistence); absent means memory only.
+  persist?: HostQueryPersist<TData>
 }
 
 export type HostQuerySignal = {
@@ -59,7 +62,7 @@ function hostQueryOptions<TInput extends HostQueryParams, TData>(
   target: HostQueryTarget,
   input: TInput
 ) {
-  const { family, fetch, streamBacked, signal, ...freshness } = query
+  const { family, fetch, streamBacked, signal, persist, ...freshness } = query
   const queryKey = hostQueryKey(hostId, family, target, input)
   return queryOptions({
     ...freshness,
@@ -67,7 +70,7 @@ function hostQueryOptions<TInput extends HostQueryParams, TData>(
     // No abort signal: the host has no cancel, and a screen that unmounts still wants the answer cached.
     queryFn: ({ client: queryClient }) =>
       fetch(hostReadClient(client), target, input, queryClient.getQueryData<TData>(queryKey)),
-    meta: { streamBacked, signal }
+    meta: { streamBacked, signal, persist }
   })
 }
 
@@ -119,7 +122,11 @@ function observerOptions<TInput extends HostQueryParams, TData>(
 ): UseQueryOptions<TData, Error, TData, HostQueryKey> {
   return client
     ? hostQueryOptions(query, client, hostId, target, input)
-    : { queryKey: hostQueryKey(hostId, query.family, target, input), queryFn: skipToken }
+    : {
+        queryKey: hostQueryKey(hostId, query.family, target, input),
+        queryFn: skipToken,
+        meta: { streamBacked: query.streamBacked, signal: query.signal, persist: query.persist }
+      }
 }
 
 export function useHostQuery<TInput extends HostQueryParams, TData>(
