@@ -1,4 +1,5 @@
 import { WORKSPACE_ATTACHMENT_RUNTIME_CAPABILITIES } from './workspace-attachments/workspace-attachment-capabilities'
+import { ORCA_SIDEBAR_INPUTS_IS_MAIN } from './sidebar-inputs-switch'
 
 export const WORKTREE_RENAME_ERROR_DISMISS_RUNTIME_CAPABILITY =
   'worktree.rename-error-dismiss.v1' as const
@@ -94,7 +95,7 @@ export function assertFolderParentSetSupported(
 export const WORKTREE_RUN_APPROVED_SETUP_RUNTIME_CAPABILITY =
   'worktree.run-approved-setup.v1' as const
 
-// Hosts that publish worktreeRowsChanged, so a phone's workspace list polls worktree.ps only as a backstop.
+// Hosts that publish worktreeRowsChanged (only while the sidebar feed is off), so a phone's workspace list polls worktree.ps only as a backstop.
 export const WORKTREE_ROWS_CHANGED_EVENT_RUNTIME_CAPABILITY =
   'worktree.rows-changed-event.v1' as const
 
@@ -122,5 +123,5 @@ export const WORKTREE_RUNTIME_CAPABILITIES = [
   WORKTREE_CROSS_STORE_LINEAGE_RUNTIME_CAPABILITY,
   WORKTREE_SET_FOLDER_PARENT_RUNTIME_CAPABILITY,
   WORKTREE_RUN_APPROVED_SETUP_RUNTIME_CAPABILITY,
-  WORKTREE_ROWS_CHANGED_EVENT_RUNTIME_CAPABILITY
+  ...(ORCA_SIDEBAR_INPUTS_IS_MAIN ? [] : [WORKTREE_ROWS_CHANGED_EVENT_RUNTIME_CAPABILITY])
 ] as const

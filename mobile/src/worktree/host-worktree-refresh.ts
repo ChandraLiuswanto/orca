@@ -72,14 +72,15 @@ export function startHostWorktreeRefresh({
       eventStreamReady = false
       return
     }
-    if (hidden()) {
-      owed = true
-      return
-    }
-    if (event.type === 'sidebarInputsChanged') {
+    if (event.type === 'workspaceViewChanged') {
+      if (hidden()) {
+        owed = true
+      } else {
+        void syncViewSettings()
+      }
+    } else if (event.type === 'sidebarInputsChanged' && !hidden()) {
+      // Coming back to the foreground refreshes the feed anyway.
       sidebarFeed?.changed(event)
-    } else if (event.type === 'workspaceViewChanged') {
-      void syncViewSettings()
     }
   })
 
