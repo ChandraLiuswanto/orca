@@ -15,7 +15,7 @@ import {
   writeWorktreeSortOrder,
   type WorktreeSortOrderRequest
 } from '../../../persistence/worktree-sort-order-write'
-import type { RuntimeStore } from '../../runtime-store-contract'
+import type { RuntimeStore } from '../../construction/runtime-store-contract'
 import {
   isWslMoveSourceHost,
   isWslMoveWorkspaceBlocked,

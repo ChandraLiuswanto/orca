@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AGENT_PROMPT_BRACKETED_PASTE_END } from '../../../../../../shared/agent-launch/startup/agent-prompt-injection'
-import { ORCHESTRATION_CONTRACT_VERSION } from '../../../../../../shared/protocol-version'
+import { ORCHESTRATION_CONTRACT_VERSION } from '../../../../../../shared/orchestration-runtime-capabilities'
 import {
   AGENT_PROMPT_TEST_WORKTREE_ID,
   createAgentPromptSubmissionRuntime

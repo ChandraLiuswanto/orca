@@ -16,7 +16,7 @@ import {
 import { sharesResolvedWorktreeLineageBoundary } from '../../../../shared/resolved-worktree-lineage'
 import { crossStoreParentRefOfRow } from '../../../../shared/worktree/lineage-row-identity'
 import type { OrchestrationDb } from '../../orchestration/db/orchestration-db'
-import type { RuntimeStore } from '../../runtime-store-contract'
+import type { RuntimeStore } from '../../construction/runtime-store-contract'
 import type { ResolvedWorktree } from '../catalog/runtime-worktree-path-identity'
 import { readStoreInstallationId } from '../../hosts/platform-probe/host-descriptor'
 import { assertParentInAnotherStore } from './cross-store-parent-store-check'

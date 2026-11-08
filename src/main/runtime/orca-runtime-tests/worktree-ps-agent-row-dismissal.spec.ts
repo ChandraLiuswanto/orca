@@ -4,7 +4,7 @@ import { registerLivePty } from './bind-first-pane.test-fixture'
 import './runtime-test-module-registration.spec'
 import { OrcaRuntimeService } from '../orca-runtime'
 import { TEST_WORKTREE_ID, store } from './orca-runtime-test-fixtures.spec'
-import { makeAgentStatusStoreWiring } from '../agent-status-store-wiring.test-fixture'
+import { makeAgentStatusStoreWiring } from '../terminal/identity/agent-status-store-wiring.test-fixture'
 
 /** Drive real OSC parsing so desktop dismissal also removes runtime and mobile rows. */
 const LEAF_ID = '77777777-7777-4777-8777-777777777777'

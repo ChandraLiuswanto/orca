@@ -17,7 +17,7 @@ import {
   BROWSER_CLIENT_HOST_RUNTIME_CAPABILITY,
   BROWSER_CLIENT_PAGE_METADATA_RUNTIME_CAPABILITY,
   BROWSER_NETWORK_TUNNEL_RUNTIME_CAPABILITY
-} from '../../../shared/protocol-version'
+} from '../../../shared/browser-runtime-capabilities'
 import type { HostWorktreeTarget } from '../../../shared/worktree/host-qualified-identity'
 import {
   partialRuntimeStore,
